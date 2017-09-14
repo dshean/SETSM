@@ -43,19 +43,22 @@ opt+=" -utm_zone 10"
 #SETSM seeding can't read vrt, needs raw or exported tif from low-res run
 #opt+=" -seed $rpcdem $rpcdem_error"
 
+#ASP GDAL is built on OpenJPEG, can handle NITF
+gdal_translate=~/sw/asp/latest/bin/gdal_translate
+gdal_opt='-co COMPRESS=LZW -co TILED=YES -co BIGTIFF=IF_SAFER'
+gdal_opt+=' -ot UInt16 -co NBITS=16'
+
 if false ; then 
     #Generate corrected, mosaicked images for each ID
     ntfmos.sh .
+    parallel --verbose --progress --delay 0.1 "if [ ! -e {.}_UInt16.tif ] ; then $gdal_translate $gdal_opt {} {.}_UInt16.tif; ln -s {.}.xml {.}_UInt16.xml ; fi" ::: *r100.tif
     #Note: SETSM may complain about images longer than ~50 km, this sets to 250 km
     opt+=" -LOO 250"
-    seglist="r100"
-else ; 
+    seglist="r100_UInt16"
+else  
     #Convert individual ntf to tif
-    #Run GDAL built with OpenJPEG
-    gdal_translate=~/sw/asp/latest/bin/gdal_translate
-    gdal_opt='-co COMPRESS=LZW -co TILED=YES -co BIGTIFF=IF_SAFER'
     parallel --verbose --progress --delay 0.1 "if [ ! -e {.}.tif ] ; then $gdal_translate $gdal_opt {} {.}.tif; fi" ::: $ntflist
-    seglist="R1C1 R2C2 R3C3 R4C4"
+    seglist="R1C1 R2C1 R3C1 R4C1"
 fi
 
 if [ ! -d out ] ; then 
@@ -65,6 +68,7 @@ fi
 #img1=$(ls ${id1}.r100.tif)
 #img2=$(ls ${id2}.r100.tif)
 
+#seglist="r100_UInt16 R1C1 R2C1 R3C1 R4C1"
 #seglist="R1C1"
 for seg in $seglist
 do
@@ -72,19 +76,21 @@ do
     img2=$(ls *${id2}*${seg}*.tif)
 
     #Prepare seed DEM
-    proj="$(proj_select.py ${img1%.*}.xml)"
-    map_extent=$(dg_stereo_int.py ${img1%.*}.xml ${img2%.*}.xml "$proj")
-    echo $map_extent
-    map_extent=$(dg_stereo_int.py ${img1%.*}.xml ${img2%.*}.xml "$proj" 5000)
-    echo $map_extent
-    warptool.py -te "$map_extent" -t_srs "$proj" -outdir . $rpcdem
-    rpcdem=$(basename $rpcdem)
-    rpcdem=./${rpcdem%.*}_warp.tif
-    gdal_translate -of ENVI $rpcdem ${rpcdem%.*}.raw
-    rpcdem=${rpcdem%.*}.raw
-
-    #This still results in segfault
-    #opt+=" -seed $rpcdem $rpcdem_error"
+    if false ; then 
+        proj="$(proj_select.py ${img1%.*}.xml)"
+        #map_extent=$(dg_stereo_int.py ${img1%.*}.xml ${img2%.*}.xml "$proj")
+        #echo $map_extent
+        #Pad seed DEM by 5 km around image intersection
+        map_extent=$(dg_stereo_int.py ${img1%.*}.xml ${img2%.*}.xml "$proj" 5000)
+        echo $map_extent
+        warptool.py -te "$map_extent" -t_srs "$proj" -outdir . $rpcdem
+        rpcdem=$(basename $rpcdem)
+        rpcdem=./${rpcdem%.*}_warp.tif
+        gdal_translate -of ENVI $rpcdem ${rpcdem%.*}.raw
+        rpcdem=${rpcdem%.*}.raw
+        #This still results in segfault
+        opt+=" -seed $rpcdem $rpcdem_error"
+    fi
 
     outdir=out/${img1%.*}__${img2%.*}
     #opt+=" -gridonly $outdir/txt"
